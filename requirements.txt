@@ -6,4 +6,7 @@ PyPDF2
 docx
 pandas
 torch
+speechrecognition
+pydub  # Required for handling audio formats
+
 
