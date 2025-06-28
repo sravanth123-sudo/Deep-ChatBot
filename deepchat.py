@@ -14,7 +14,7 @@ headers = {
 
 # Streamlit Configuration
 st.set_page_config(page_title="Enhanced Chatbot", layout="wide")
-st.title("🤖 My Enhanced Chatbot")
+st.title("🤖 Havish Chatbot")
 st.sidebar.title("Navigation")
 st.sidebar.markdown("""
 - 📂 **New Chat**
