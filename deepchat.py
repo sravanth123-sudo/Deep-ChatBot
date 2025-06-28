@@ -1,8 +1,8 @@
 import streamlit as st
 import requests
-import tempfile
 import os
-import whisper
+import speech_recognition as sr
+from io import BytesIO
 
 # Load API key from Streamlit Secrets
 API_KEY = st.secrets["OPENROUTER_API_KEY"]
@@ -16,7 +16,7 @@ headers = {
 }
 
 # Streamlit Configuration
-st.set_page_config(page_title="Personal Chatbot", layout="wide")
+st.set_page_config(page_title="Enhanced Chatbot", layout="wide")
 st.title("🤖 My Enhanced Chatbot")
 st.sidebar.title("Navigation")
 st.sidebar.markdown("""
@@ -25,13 +25,26 @@ st.sidebar.markdown("""
 - 📚 **Library**
 """)
 
-# Chat history
+# Initialize chat history
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 if "file_response" not in st.session_state:
     st.session_state.file_response = None
 
 # Helper Functions
+def transcribe_audio(file):
+    """Transcribe audio using SpeechRecognition."""
+    recognizer = sr.Recognizer()
+    audio_file = sr.AudioFile(BytesIO(file.read()))
+    with audio_file as source:
+        audio = recognizer.record(source)
+    try:
+        return recognizer.recognize_google(audio)
+    except sr.UnknownValueError:
+        return "Sorry, I could not understand the audio."
+    except sr.RequestError as e:
+        return f"Could not request results from Google Speech Recognition service; {e}"
+
 def ask_openai(question, chat_history):
     """Fetch response from OpenRouter AI."""
     payload = {
@@ -43,14 +56,8 @@ def ask_openai(question, chat_history):
     data = response.json()
     return data["choices"][0]["message"]["content"]
 
-def transcribe_audio(file_path):
-    """Transcribe audio using Whisper."""
-    model = whisper.load_model("base")
-    result = model.transcribe(file_path)
-    return result["text"]
-
-# Left Sidebar: Features
-st.sidebar.header("Features")
+# Sidebar: File Upload
+st.sidebar.header("Upload Files")
 uploaded_file = st.sidebar.file_uploader("Upload a File", type=["txt", "pdf", "docx", "csv"])
 if uploaded_file:
     st.sidebar.info("📄 File uploaded! You can ask questions about its content.")
@@ -62,40 +69,27 @@ chat_container = st.container()
 # User Input Section
 st.write("---")
 with st.form("user_input_form", clear_on_submit=True):
-    user_input = st.text_input(
-        "Your Question:",
-        placeholder="Type your question here...",
-        key="user_input"
-    )
+    user_input = st.text_input("Your Question:", placeholder="Type your question here...")
     voice_input = st.file_uploader("Upload Voice Question (MP3/WAV):", type=["mp3", "wav"])
     submitted = st.form_submit_button("Send")
 
 if submitted:
     # Process User Input
     if voice_input:
-        # Save the audio file temporarily
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as temp_audio:
-            temp_audio.write(voice_input.read())
-            voice_path = temp_audio.name
+        transcription = transcribe_audio(voice_input)
+        user_input = f"[Voice Input] {transcription}"
 
-        user_input = transcribe_audio(voice_path)
-        os.remove(voice_path)
-        st.session_state.chat_history.append({"role": "user", "content": f"[Voice Input] {user_input}"})
-    else:
-        st.session_state.chat_history.append({"role": "user", "content": user_input})
+    st.session_state.chat_history.append({"role": "user", "content": user_input})
 
-    # Process File Content (if any)
+    # RAG Approach: Combine file content and user query
     if uploaded_file:
         file_content = uploaded_file.read().decode("utf-8")
         st.session_state.file_response = f"The uploaded file contains: {file_content[:200]}..."
-
-    # RAG Approach
-    if st.session_state.file_response:
         combined_context = f"{st.session_state.file_response}\n\nUser Query: {user_input}"
     else:
         combined_context = user_input
 
-    # Query OpenAI
+    # Query OpenRouter
     try:
         response = ask_openai(combined_context, st.session_state.chat_history)
         st.session_state.chat_history.append({"role": "assistant", "content": response})
@@ -105,14 +99,11 @@ if submitted:
 
 # Display Chat Messages
 with chat_container:
-    for idx, message in enumerate(st.session_state.chat_history):
+    for message in st.session_state.chat_history:
         if message["role"] == "user":
             st.markdown(
                 f"<div style='background-color: #e8f4ff; padding: 10px; border-radius: 10px; margin-bottom: 5px; text-align: right;'>"
-                f"<b>You:</b> {message['content']} "
-                f"<button onclick='editQuestion({idx})'>Edit</button>"
-                f"<button onclick='copyQuestion({idx})'>Copy</button>"
-                "</div>",
+                f"<b>You:</b> {message['content']}</div>",
                 unsafe_allow_html=True
             )
         elif message["role"] == "assistant":
