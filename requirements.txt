@@ -1,3 +1,8 @@
 streamlit
 python-dotenv
 requests
+openai-whisper
+PyPDF2
+docx
+pandas
+
