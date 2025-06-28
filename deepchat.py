@@ -1,8 +1,5 @@
 import streamlit as st
 import requests
-import os
-import speech_recognition as sr
-from io import BytesIO
 
 # Load API key from Streamlit Secrets
 API_KEY = st.secrets["OPENROUTER_API_KEY"]
@@ -25,26 +22,13 @@ st.sidebar.markdown("""
 - 📚 **Library**
 """)
 
-# Initialize chat history
+# Initialize session state for chat history and editing
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
-if "file_response" not in st.session_state:
-    st.session_state.file_response = None
+if "editing_index" not in st.session_state:
+    st.session_state.editing_index = None  # None means no question is being edited
 
 # Helper Functions
-def transcribe_audio(file):
-    """Transcribe audio using SpeechRecognition."""
-    recognizer = sr.Recognizer()
-    audio_file = sr.AudioFile(BytesIO(file.read()))
-    with audio_file as source:
-        audio = recognizer.record(source)
-    try:
-        return recognizer.recognize_google(audio)
-    except sr.UnknownValueError:
-        return "Sorry, I could not understand the audio."
-    except sr.RequestError as e:
-        return f"Could not request results from Google Speech Recognition service; {e}"
-
 def ask_openai(question, chat_history):
     """Fetch response from OpenRouter AI."""
     payload = {
@@ -56,8 +40,7 @@ def ask_openai(question, chat_history):
     data = response.json()
     return data["choices"][0]["message"]["content"]
 
-# Sidebar: File Upload
-st.sidebar.header("Upload Files")
+# Sidebar: File Upload (Optional)
 uploaded_file = st.sidebar.file_uploader("Upload a File", type=["txt", "pdf", "docx", "csv"])
 if uploaded_file:
     st.sidebar.info("📄 File uploaded! You can ask questions about its content.")
@@ -70,45 +53,59 @@ chat_container = st.container()
 st.write("---")
 with st.form("user_input_form", clear_on_submit=True):
     user_input = st.text_input("Your Question:", placeholder="Type your question here...")
-    voice_input = st.file_uploader("Upload Voice Question (MP3/WAV):", type=["mp3", "wav"])
     submitted = st.form_submit_button("Send")
 
 if submitted:
-    # Process User Input
-    if voice_input:
-        transcription = transcribe_audio(voice_input)
-        user_input = f"[Voice Input] {transcription}"
-
+    # Add user input to chat history
     st.session_state.chat_history.append({"role": "user", "content": user_input})
 
-    # RAG Approach: Combine file content and user query
-    if uploaded_file:
-        file_content = uploaded_file.read().decode("utf-8")
-        st.session_state.file_response = f"The uploaded file contains: {file_content[:200]}..."
-        combined_context = f"{st.session_state.file_response}\n\nUser Query: {user_input}"
-    else:
-        combined_context = user_input
-
-    # Query OpenRouter
+    # Generate response
     try:
-        response = ask_openai(combined_context, st.session_state.chat_history)
+        response = ask_openai(user_input, st.session_state.chat_history)
         st.session_state.chat_history.append({"role": "assistant", "content": response})
     except Exception as e:
         response = f"⚠️ Error: {str(e)}"
         st.session_state.chat_history.append({"role": "assistant", "content": response})
 
-# Display Chat Messages
+# Display Chat Messages with Edit and Copy Options
 with chat_container:
-    for message in st.session_state.chat_history:
+    for idx, message in enumerate(st.session_state.chat_history):
         if message["role"] == "user":
-            st.markdown(
-                f"<div style='background-color: #e8f4ff; padding: 10px; border-radius: 10px; margin-bottom: 5px; text-align: right;'>"
-                f"<b>You:</b> {message['content']}</div>",
-                unsafe_allow_html=True
-            )
+            # Display user message
+            col1, col2, col3 = st.columns([8, 1, 1])
+            with col1:
+                if st.session_state.editing_index == idx:
+                    # Show input box for editing
+                    edited_text = st.text_input(
+                        "Edit your question:", value=message["content"], key=f"edit_{idx}"
+                    )
+                    save_button = st.button("Save", key=f"save_{idx}")
+                    cancel_button = st.button("Cancel", key=f"cancel_{idx}")
+                    if save_button:
+                        # Update question and regenerate response
+                        st.session_state.chat_history[idx]["content"] = edited_text
+                        try:
+                            updated_response = ask_openai(
+                                edited_text, st.session_state.chat_history[:idx]
+                            )
+                            st.session_state.chat_history[idx + 1]["content"] = updated_response
+                        except Exception as e:
+                            st.error(f"Error: {str(e)}")
+                        st.session_state.editing_index = None
+                    if cancel_button:
+                        st.session_state.editing_index = None
+                else:
+                    st.markdown(f"**You:** {message['content']}")
+            with col2:
+                # Edit button
+                edit_button = st.button("✏️", key=f"edit_button_{idx}")
+                if edit_button:
+                    st.session_state.editing_index = idx
+            with col3:
+                # Copy button
+                copy_button = st.button("📋", key=f"copy_button_{idx}")
+                if copy_button:
+                    st.text_area("Copy Question:", value=message["content"], key=f"copy_{idx}")
         elif message["role"] == "assistant":
-            st.markdown(
-                f"<div style='background-color: #f0f0f0; padding: 10px; border-radius: 10px; margin-bottom: 5px;'>"
-                f"<b>Bot:</b> {message['content']}</div>",
-                unsafe_allow_html=True
-            )
+            # Display bot message
+            st.markdown(f"**Bot:** {message['content']}")
